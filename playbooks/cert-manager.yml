@@ -1,0 +1,66 @@
+- name: Set up cert-manager
+  hosts: server
+  gather_facts: false
+
+  tasks:
+    - name: Add jetstack Helm repo
+      ansible.builtin.command:
+        cmd: helm repo add jetstack https://charts.jetstack.io
+      changed_when: false
+
+    - name: Update Helm repos
+      ansible.builtin.command:
+        cmd: helm repo update
+      changed_when: false
+
+    - name: Install cert-manager via Helm
+      ansible.builtin.command:
+        cmd: >
+          helm upgrade --install cert-manager jetstack/cert-manager
+          --namespace cert-manager
+          --create-namespace
+          --set crds.enabled=true
+          --wait
+      register: helm_output
+      changed_when: "'unchanged' not in helm_output.stdout"
+
+    - name: Wait for cert-manager pods to be ready
+      ansible.builtin.command:
+        cmd: kubectl wait --for=condition=ready pod --all -n cert-manager --timeout=120s
+      changed_when: false
+
+    - name: Template Cloudflare API token secret
+      ansible.builtin.template:
+        src: templates/cloudflare-secret.yaml.j2
+        dest: /tmp/cloudflare-secret.yaml
+        mode: '0600'
+
+    - name: Apply Cloudflare API token secret
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/cloudflare-secret.yaml
+      changed_when: false
+
+    - name: Remove temp Cloudflare secret file
+      ansible.builtin.file:
+        path: /tmp/cloudflare-secret.yaml
+        state: absent
+
+    - name: Copy ClusterIssuer to remote
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/apps/cert-manager/clusterissuer.yaml"
+        dest: /tmp/clusterissuer.yaml
+        mode: '0600'
+
+    - name: Apply ClusterIssuer
+      ansible.builtin.command:
+        cmd: kubectl apply -f /tmp/clusterissuer.yaml
+      changed_when: false
+
+    - name: Verify ClusterIssuer is ready
+      ansible.builtin.command:
+        cmd: kubectl get clusterissuer letsencrypt-prod -o jsonpath='{.status.conditions[0].type}'
+      register: issuer_status
+      changed_when: false
+      retries: 10
+      delay: 10
+      until: issuer_status.stdout == "Ready"
