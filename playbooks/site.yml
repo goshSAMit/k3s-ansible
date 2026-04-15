@@ -22,7 +22,7 @@
   roles:
     - role: k3s_agent
 
-- import_playbook: storage.yml
+- import_playbook: ../../playbooks/storage.yml
 
 - name: Label agent nodes as workers
   hosts: server
